@@ -1,14 +1,15 @@
 import requests
-import requests
 import urllib3
+import csv # НОВО: Вграден модул за създаване на CSV таблици
+
+# Скриваме системното предупреждение за Mac
 urllib3.disable_warnings(urllib3.exceptions.NotOpenSSLWarning)
 
-
-print("--- Стартиране на SOC Log Analyzer (Ниво 3: Threat Intelligence) ---")
+print("--- Стартиране на SOC Log Analyzer (Ниво 4: CSV Експорт) ---")
 
 malicious_ips = []
 
-# Четене на лог файла (както в Ниво 2)
+# 1. Четене на лог файла
 with open('server.log', 'r') as file:
     for line in file:
         if "FAILED LOGIN" in line:
@@ -16,9 +17,9 @@ with open('server.log', 'r') as file:
             if ip_address not in malicious_ips:
                 malicious_ips.append(ip_address)
 
-print(f"Открити са {len(malicious_ips)} подозрителни адреса. Започва проверка в AbuseIPDB...\n")
+print(f"Открити са {len(malicious_ips)} подозрителни адреса. Генериране на доклад...\n")
 
-# --- THREAT INTELLIGENCE ИНТЕГРАЦИЯ ---
+# 2. Подготовка за Threat Intelligence
 API_KEY = '61e61446b898d704db3c3a5af96b8c7b37361f3ba0f6e1bc52c886e24571e1d50155f4e55986aece' # <-- Постави своя ключ тук!
 API_URL = 'https://api.abuseipdb.com/api/v2/check'
 
@@ -27,38 +28,36 @@ headers = {
     'Key': API_KEY
 }
 
-# Проверяваме всяко намерено IP в базата данни
-for ip in malicious_ips:
-    querystring = {
-        'ipAddress': ip,
-        'maxAgeInDays': '90' # Търсим данни за атаки от последните 90 дни
-    }
+# 3. НОВО: Създаваме и отваряме нов CSV файл за записване ('w' - write)
+with open('threat_report.csv', 'w', newline='') as csv_file:
+    writer = csv.writer(csv_file)
     
-    try:
-        # Изпращане на заявката през интернет
-        response = requests.get(url=API_URL, headers=headers, params=querystring)
+    # Записваме заглавния ред на таблицата
+    writer.writerow(['IP Address', 'Country', 'Abuse Score', 'Status'])
+
+    # Проверяваме всяко IP и записваме резултата директно в таблицата
+    for ip in malicious_ips:
+        querystring = {'ipAddress': ip, 'maxAgeInDays': '90'}
         
-        # Ако сървърът върне статус 200 (ОК - успешно)
-        if response.status_code == 200:
-            data = response.json()
-            score = data['data']['abuseConfidenceScore']
-            country = data['data']['countryCode']
+        try:
+            response = requests.get(url=API_URL, headers=headers, params=querystring)
             
-            print(f"[!] Резултат за IP: {ip}")
-            print(f"    - Държава: {country}")
-            print(f"    - Рисков рейтинг (Abuse Score): {score}%")
-            
-            if score > 0:
-                print("    -> ЗАКЛЮЧЕНИЕ: ВНИМАНИЕ! Това IP е докладвано от други компании!\n")
+            if response.status_code == 200:
+                data = response.json()
+                score = data['data']['abuseConfidenceScore']
+                country = data['data']['countryCode']
+                
+                # Определяме статуса въз основа на рейтинга
+                status = "MALICIOUS (BLOCKED)" if score > 0 else "CLEAN"
+                
+                # Записваме данните за това IP като нов ред в таблицата
+                writer.writerow([ip, country, f"{score}%", status])
+                
+                print(f"[+] Успешно анализирано и записано IP: {ip}")
             else:
-                print("    -> ЗАКЛЮЧЕНИЕ: Засега това IP изглежда чисто.\n")
-        else:
-            print(f"Грешка при проверка на {ip}: Status {response.status_code}")
-            
-    except Exception as e:
-        print(f"Възникна проблем при връзката: {e}")
+                print(f"[-] Грешка при проверка на {ip}: Status {response.status_code}")
+                
+        except Exception as e:
+            print(f"[-] Възникна проблем при връзката: {e}")
 
-print("--- Анализът е завършен ---")
-
-
-
+print("\n--- Анализът е завършен! Резултатите са запазени в 'threat_report.csv' ---")
